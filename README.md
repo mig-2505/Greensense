@@ -22,8 +22,8 @@ O **GreenSense** é um sistema moderno de Visão Computacional que automatiza a 
 ### 1. Clonar e Preparar o Ambiente
 Primeiro, faça o clone deste repositório e instale as dependências:
 ```bash
-git clone https://github.com/mig-2505/greensense
-cd greensense
+git clone https://github.com/mig-2505/Greensense
+cd Greensense
 pip install opencv-python streamlit ultralytics numpy pandas
 ```
 
