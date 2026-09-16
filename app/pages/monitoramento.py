@@ -1,233 +1,124 @@
+import streamlit as st
+import cv2
 import sys
 from pathlib import Path
-import time
-import cv2
-import streamlit as st
 
+# Garante que o Streamlit encontre a pasta raiz do projeto
 ROOT_DIR = Path(__file__).resolve().parents[2]
-if str(ROOT_DIR) not in sys.path:
-    sys.path.append(str(ROOT_DIR))
+sys.path.append(str(ROOT_DIR))
 
-from visao_computacional.core.measure import (
-    processar_frame_referencia,
-    processar_frame_fixo,
-    HSV_REF_MIN_DEFAULT,
-    HSV_REF_MAX_DEFAULT,
-    HSV_GRAMA_MIN_DEFAULT,
-    HSV_GRAMA_MAX_DEFAULT,
-    AREA_MINIMA_DEFAULT,
-    REFERENCIA_LARGURA_CM_DEFAULT,
-)
-from visao_computacional.core.io_utils import (
-    garantir_pastas,
-    carregar_pixels_por_cm,
-    salvar_foto,
-    salvar_medida_dashboard,
-    PASTA_FOTOS_DASHBOARD,
-)
+# Importa as funções do nosso núcleo (agora atualizado para YOLO)
+from visao_computacional.core import measure, io_utils
 from visao_computacional.core.vision import bgr_para_rgb
 
-st.set_page_config(page_title="GreenSense - Monitoramento", layout="wide")
-st.title("📷 GreenSense - Monitoramento")
 
-garantir_pastas()
+def main():
+    st.set_page_config(page_title="Monitoramento - GreenSense", layout="wide")
+    st.title("📷 GreenSense - Monitoramento (I.A. YOLOv8)")
 
-if "camera_ativa" not in st.session_state:
-    st.session_state.camera_ativa = False
-if "ultimo_frame_processado" not in st.session_state:
-    st.session_state.ultimo_frame_processado = None
-if "salvar_agora" not in st.session_state:
-    st.session_state.salvar_agora = False
-if "feedback_msg" not in st.session_state:
-    st.session_state.feedback_msg = ""
-if "ultimas_medidas" not in st.session_state:
-    st.session_state.ultimas_medidas = {}
+    # Garante que as pastas para salvar fotos e o CSV existam
+    io_utils.garantir_pastas()
 
-st.sidebar.header("Configurações")
+    # CARREGA A CALIBRAÇÃO (Escala fixa gerada pelo mouse)
+    pixels_por_cm_fixo = io_utils.carregar_pixels_por_cm()
 
-modo = st.sidebar.radio("Modo de medição", ["Com referência", "Calibração fixa"], index=0)
-area_minima = st.sidebar.slider("Área mínima (px)", 50, 5000, AREA_MINIMA_DEFAULT, 50)
+    # Layout Principal: Coluna para o Vídeo e Coluna para os Dados
+    col_video, col_metricas = st.columns([7, 3])
 
-st.sidebar.subheader("HSV Grama")
-hmin_g = st.sidebar.slider("H min (grama)", 0, 179, HSV_GRAMA_MIN_DEFAULT[0])
-smin_g = st.sidebar.slider("S min (grama)", 0, 255, HSV_GRAMA_MIN_DEFAULT[1])
-vmin_g = st.sidebar.slider("V min (grama)", 0, 255, HSV_GRAMA_MIN_DEFAULT[2])
-hmax_g = st.sidebar.slider("H max (grama)", 0, 179, HSV_GRAMA_MAX_DEFAULT[0])
-smax_g = st.sidebar.slider("S max (grama)", 0, 255, HSV_GRAMA_MAX_DEFAULT[1])
-vmax_g = st.sidebar.slider("V max (grama)", 0, 255, HSV_GRAMA_MAX_DEFAULT[2])
+    with col_metricas:
+        st.subheader("Métricas em Tempo Real")
+        placeholder_status = st.empty()
+        placeholder_escala = st.empty()
+        placeholder_largura = st.empty()
+        placeholder_altura = st.empty()
 
-HSV_GRAMA_MIN = (hmin_g, smin_g, vmin_g)
-HSV_GRAMA_MAX = (hmax_g, smax_g, vmax_g)
+        if pixels_por_cm_fixo is None:
+            st.error("⚠️ Calibração não encontrada! Rode o script gerar_calibracao_fixa.py")
 
-HSV_REF_MIN = HSV_REF_MIN_DEFAULT
-HSV_REF_MAX = HSV_REF_MAX_DEFAULT
-referencia_largura_cm = REFERENCIA_LARGURA_CM_DEFAULT
+    # BARRA LATERAL (Controles limpos)
+    st.sidebar.title("Configurações")
 
-if modo == "Com referência":
-    st.sidebar.subheader("Referência")
-    referencia_largura_cm = st.sidebar.number_input(
-        "Largura real da referência (cm)",
-        min_value=0.1,
-        max_value=200.0,
-        value=float(REFERENCIA_LARGURA_CM_DEFAULT),
-        step=0.1
-    )
+    # Botões de controle da câmera
+    col1, col2 = st.sidebar.columns(2)
+    iniciar = col1.button("▶️ Iniciar")
+    parar = col2.button("⏹️ Parar")
 
-    st.sidebar.subheader("HSV Referência")
-    hmin_r = st.sidebar.slider("H min (ref)", 0, 179, HSV_REF_MIN_DEFAULT[0])
-    smin_r = st.sidebar.slider("S min (ref)", 0, 255, HSV_REF_MIN_DEFAULT[1])
-    vmin_r = st.sidebar.slider("V min (ref)", 0, 255, HSV_REF_MIN_DEFAULT[2])
-    hmax_r = st.sidebar.slider("H max (ref)", 0, 179, HSV_REF_MAX_DEFAULT[0])
-    smax_r = st.sidebar.slider("S max (ref)", 0, 255, HSV_REF_MAX_DEFAULT[1])
-    vmax_r = st.sidebar.slider("V max (ref)", 0, 255, HSV_REF_MAX_DEFAULT[2])
+    st.sidebar.markdown("---")
+    salvar = st.sidebar.button("📸 Salvar foto atual")
 
-    HSV_REF_MIN = (hmin_r, smin_r, vmin_r)
-    HSV_REF_MAX = (hmax_r, smax_r, vmax_r)
+    # Gerencia o estado da câmera no Streamlit
+    if "rodando" not in st.session_state:
+        st.session_state.rodando = False
 
-col_sb1, col_sb2 = st.sidebar.columns(2)
-if col_sb1.button("▶️ Iniciar", use_container_width=True):
-    st.session_state.camera_ativa = True
+    if iniciar:
+        st.session_state.rodando = True
+    if parar:
+        st.session_state.rodando = False
 
-if col_sb2.button("⏹️ Parar", use_container_width=True):
-    st.session_state.camera_ativa = False
+    # LOOP DA CÂMERA E PROCESSAMENTO DA I.A.
+    with col_video:
+        placeholder_video = st.empty()
 
-if st.sidebar.button("📸 Salvar foto atual", use_container_width=True):
-    st.session_state.salvar_agora = True
+        if st.session_state.rodando:
+            cap = cv2.VideoCapture(0)  # 0 é a webcam padrão. Mude para 1 ou 2 se usar câmera externa
 
-col_left, col_right = st.columns([2, 1])
+            while st.session_state.rodando:
+                ret, frame = cap.read()
+                if not ret:
+                    st.error("Erro ao acessar a câmera. Verifique a conexão.")
+                    break
 
-with col_left:
-    st.subheader("Vídeo")
-    frame_placeholder = st.empty()
-
-with col_right:
-    st.subheader("Métricas")
-    m_status = st.empty()
-    m_escala = st.empty()
-    m_largura = st.empty()
-    m_altura = st.empty()
-    m_feedback = st.empty()
-
-mask_col1, mask_col2 = st.columns(2)
-mask_ref_placeholder = mask_col1.empty()
-mask_grama_placeholder = mask_col2.empty()
-
-if st.session_state.feedback_msg:
-    if "✅" in st.session_state.feedback_msg:
-        m_feedback.success(st.session_state.feedback_msg)
-    elif "⚠️" in st.session_state.feedback_msg:
-        m_feedback.warning(st.session_state.feedback_msg)
-    else:
-        m_feedback.error(st.session_state.feedback_msg)
-
-if st.session_state.camera_ativa:
-    cap = cv2.VideoCapture(0)
-
-    if not cap.isOpened():
-        st.error("Não foi possível abrir a câmera.")
-        st.session_state.camera_ativa = False
-    else:
-        while st.session_state.camera_ativa:
-            ok, frame = cap.read()
-            if not ok:
-                st.warning("Falha ao capturar frame.")
-                break
-
-            if modo == "Com referência":
-                frame_out, mascara_ref, mascara_grama, medidas = processar_frame_referencia(
+                # A Mágica Acontece Aqui: Passa a imagem e a calibração para a I.A.
+                frame_processado, _, medidas = measure.processar_frame_fixo(
                     frame_bgr=frame,
-                    hsv_ref_min=HSV_REF_MIN,
-                    hsv_ref_max=HSV_REF_MAX,
-                    hsv_grama_min=HSV_GRAMA_MIN,
-                    hsv_grama_max=HSV_GRAMA_MAX,
-                    area_minima=area_minima,
-                    referencia_largura_cm=referencia_largura_cm
+                    pixels_por_cm_fixo=pixels_por_cm_fixo
                 )
-            else:
-                px_cm = carregar_pixels_por_cm()
-                if px_cm is None:
-                    frame_out = frame.copy()
-                    cv2.putText(frame_out, "Calibracao fixa nao encontrada", (20, 40),
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
-                    mascara_ref = None
-                    mascara_grama = None
-                    medidas = {}
+
+                # Exibe o vídeo com os retângulos na tela do Dashboard
+                frame_rgb = bgr_para_rgb(frame_processado)
+                placeholder_video.image(frame_rgb, channels="RGB", use_container_width=True)
+
+                # Atualiza as métricas de texto na direita
+                placeholder_status.text(f"Status: {medidas.get('status_ref', 'N/A')}")
+
+                if medidas.get('pixels_por_cm'):
+                    placeholder_escala.text(f"Escala: {medidas['pixels_por_cm']:.2f} px/cm")
                 else:
-                    frame_out, mascara_grama, medidas = processar_frame_fixo(
-                        frame_bgr=frame,
-                        pixels_por_cm_fixo=px_cm,
-                        hsv_grama_min=HSV_GRAMA_MIN,
-                        hsv_grama_max=HSV_GRAMA_MAX,
-                        area_minima=area_minima
-                    )
-                    mascara_ref = None
+                    placeholder_escala.text("Escala: N/A")
 
-            st.session_state.ultimo_frame_processado = frame_out.copy()
-            st.session_state.ultimas_medidas = medidas.copy() if isinstance(medidas, dict) else {}
+                if medidas.get('largura_cm'):
+                    placeholder_largura.text(f"Largura: {measure.formatar_medida(medidas['largura_cm'])}")
+                else:
+                    placeholder_largura.text("Largura: N/A")
 
-            frame_placeholder.image(bgr_para_rgb(frame_out), channels="RGB", caption=f"Modo: {modo}")
+                if medidas.get('altura_cm'):
+                    placeholder_altura.text(f"Altura: {measure.formatar_medida(medidas['altura_cm'])}")
+                else:
+                    placeholder_altura.text("Altura: N/A")
 
-            if mascara_ref is not None:
-                mask_ref_placeholder.image(mascara_ref, caption="Máscara Referência", clamp=True)
-            else:
-                mask_ref_placeholder.info("Máscara Referência: não usada neste modo")
-
-            if mascara_grama is not None:
-                mask_grama_placeholder.image(mascara_grama, caption="Máscara Grama", clamp=True)
-            else:
-                mask_grama_placeholder.info("Máscara Grama indisponível")
-
-            status_ref = medidas.get("status_ref", "-") if isinstance(medidas, dict) else "-"
-            px = medidas.get("pixels_por_cm") if isinstance(medidas, dict) else None
-            lg = medidas.get("largura_cm") if isinstance(medidas, dict) else None
-            al = medidas.get("altura_cm") if isinstance(medidas, dict) else None
-
-            m_status.write(f"Status: {status_ref}")
-            m_escala.write(f"Escala: {px:.2f} px/cm" if px is not None else "Escala: -")
-            m_largura.write(f"Largura: {lg:.1f} cm" if lg is not None else "Largura: -")
-            m_altura.write(f"Altura: {al:.1f} cm" if al is not None else "Altura: -")
-
-            if st.session_state.salvar_agora:
-                try:
-                    frame_salvar = st.session_state.ultimo_frame_processado
-                    medidas_salvar = st.session_state.ultimas_medidas
-
-                    if frame_salvar is None:
-                        st.session_state.feedback_msg = "⚠️ Ainda não há frame para salvar."
-                    else:
-                        prefixo = "dashboard_referencia" if modo == "Com referência" else "dashboard_fixo"
-                        caminho = salvar_foto(frame_salvar, PASTA_FOTOS_DASHBOARD, prefixo)
-
-                        salvar_medida_dashboard(
-                            arquivo_foto=Path(caminho).name,
-                            modo=modo,
-                            largura_cm=medidas_salvar.get("largura_cm"),
-                            altura_cm=medidas_salvar.get("altura_cm"),
-                            pixels_por_cm=medidas_salvar.get("pixels_por_cm"),
-                            status_ref=medidas_salvar.get("status_ref"),
+                # Salva a foto e os dados no banco/histórico (Com a trava de segurança)
+                if salvar:
+                    if medidas.get('largura_cm') is not None:
+                        caminho_foto = io_utils.salvar_foto(frame_processado, io_utils.PASTA_FOTOS_DASHBOARD)
+                        io_utils.salvar_medida_dashboard(
+                            arquivo_foto=caminho_foto,
+                            modo="calibracao fixa",
+                            largura_cm=medidas.get('largura_cm'),
+                            altura_cm=medidas.get('altura_cm'),
+                            pixels_por_cm=medidas.get('pixels_por_cm'),
+                            status_ref=medidas.get('status_ref')
                         )
+                        st.sidebar.success("✅ Foto e medidas salvas com sucesso!")
+                    else:
+                        st.sidebar.warning(
+                            "⚠️ Nenhuma planta detectada! Aguarde o retângulo verde aparecer para salvar.")
 
-                        st.session_state.feedback_msg = "✅ Foto salva com sucesso."
-                except Exception:
-                    st.session_state.feedback_msg = "❌ Erro ao salvar foto."
-                finally:
-                    st.session_state.salvar_agora = False
+                    salvar = False  # Reseta o botão para não salvar infinitamente
 
-                if "✅" in st.session_state.feedback_msg:
-                    m_feedback.success(st.session_state.feedback_msg)
-                elif "⚠️" in st.session_state.feedback_msg:
-                    m_feedback.warning(st.session_state.feedback_msg)
-                else:
-                    m_feedback.error(st.session_state.feedback_msg)
+            cap.release()  # Libera a câmera quando apertar 'Parar'
+        else:
+            placeholder_video.info("Câmera desativada. Clique em '▶️ Iniciar' na barra lateral para começar a medição.")
 
-            time.sleep(0.03)
 
-        cap.release()
-else:
-    st.info("Clique em **Iniciar** para ligar a câmera.")
-    if st.session_state.ultimo_frame_processado is not None:
-        frame_placeholder.image(
-            bgr_para_rgb(st.session_state.ultimo_frame_processado),
-            channels="RGB",
-            caption="Último frame processado"
-        )
+if __name__ == "__main__":
+    main()

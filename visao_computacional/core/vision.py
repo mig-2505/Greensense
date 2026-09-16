@@ -1,42 +1,22 @@
 import cv2
-import numpy as np
-#máscara, contorno, desenho
-
-def criar_mascara(frame_hsv, cor_min, cor_max, kernel_size=5, erode_iter=1, dilate_iter=2):
-    """
-    Cria máscara binária para a faixa HSV informada.
-    """
-    mascara = cv2.inRange(frame_hsv, cor_min, cor_max)
-    kernel = np.ones((kernel_size, kernel_size), np.uint8)
-    mascara = cv2.erode(mascara, kernel, iterations=erode_iter)
-    mascara = cv2.dilate(mascara, kernel, iterations=dilate_iter)
-    return mascara
 
 
-def encontrar_maior_contorno(mascara, area_minima=500):
+def desenhar_caixa(frame_bgr, coord_xyxy, cor=(0, 255, 0), espessura=2):
     """
-    Retorna o maior contorno válido da máscara (ou None).
+    Desenha bounding box a partir das coordenadas exatas enviadas pelo YOLO.
+    coord_xyxy é uma tupla: (x1, y1, x2, y2)
     """
-    contornos, _ = cv2.findContours(mascara, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    if not contornos:
-        return None
+    x1, y1, x2, y2 = coord_xyxy
+    cv2.rectangle(frame_bgr, (x1, y1), (x2, y2), cor, espessura)
 
-    maior = max(contornos, key=cv2.contourArea)
-    if cv2.contourArea(maior) < area_minima:
-        return None
-    return maior
-
-
-def desenhar_caixa(frame_bgr, contorno, cor=(0, 255, 0), espessura=2):
-    """
-    Desenha bounding box do contorno e retorna (x, y, w, h).
-    """
-    x, y, w, h = cv2.boundingRect(contorno)
-    cv2.rectangle(frame_bgr, (x, y), (x + w, y + h), cor, espessura)
-    return x, y, w, h
+    # Retorna o canto superior esquerdo (x1, y1) e as dimensões (w, h)
+    w = x2 - x1
+    h = y2 - y1
+    return x1, y1, w, h
 
 
 def escrever_texto(frame_bgr, texto, pos, cor=(255, 255, 255), escala=0.6, espessura=2):
+    """Escreve um texto na imagem com uma fonte padrão."""
     cv2.putText(
         frame_bgr,
         texto,
@@ -48,9 +28,6 @@ def escrever_texto(frame_bgr, texto, pos, cor=(255, 255, 255), escala=0.6, espes
     )
 
 
-def bgr_para_hsv(frame_bgr):
-    return cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2HSV)
-
-
 def bgr_para_rgb(frame_bgr):
+    """Converte o frame para RGB (necessário para exibição correta no Streamlit)."""
     return cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)

@@ -1,98 +1,76 @@
+import os
 import json
 import csv
 from pathlib import Path
 from datetime import datetime
 import cv2
 
-# Raiz do pacote visao_computacional/
-BASE_DIR = Path(__file__).resolve().parents[1]
+# ==========================================
+# CAMINHOS E DIRETÓRIOS
+# ==========================================
+# Resolve para a raiz do projeto (supondo que este arquivo esteja em visao_computacional/core)
+ROOT_DIR = Path(__file__).resolve().parents[2]
 
-CAMINHO_CALIBRACAO = BASE_DIR / "calibracao.json"
+# Pastas de saída
+PASTA_FOTOS_DASHBOARD = ROOT_DIR / "dados" / "fotos_dashboard"
+ARQUIVO_MEDIDAS_DASHBOARD = ROOT_DIR / "dados" / "medidas_dashboard.csv"
 
-PASTA_FOTOS_MEDICOES = BASE_DIR / "dados" / "fotos_medicoes"
-PASTA_FOTOS_MEDICOES_FIXO = BASE_DIR / "dados" / "fotos_medicoes_fixo"
-PASTA_FOTOS_DASHBOARD = BASE_DIR / "dados" / "fotos_dashboard"
-
-ARQUIVO_MEDIDAS_DASHBOARD = BASE_DIR / "dados" / "medidas_dashboard.csv"
+# O caminho EXATO do seu JSON de calibração
+CAMINHO_CALIBRACAO = ROOT_DIR / "visao_computacional" / "calibracao.json"
 
 
+# ==========================================
+# FUNÇÕES DE SISTEMA
+# ==========================================
 def garantir_pastas():
-    PASTA_FOTOS_MEDICOES.mkdir(parents=True, exist_ok=True)
-    PASTA_FOTOS_MEDICOES_FIXO.mkdir(parents=True, exist_ok=True)
+    """Garante que as pastas de dados existam antes de salvar os arquivos."""
     PASTA_FOTOS_DASHBOARD.mkdir(parents=True, exist_ok=True)
     ARQUIVO_MEDIDAS_DASHBOARD.parent.mkdir(parents=True, exist_ok=True)
 
 
-def carregar_pixels_por_cm(caminho_calibracao=CAMINHO_CALIBRACAO):
-    caminho = Path(caminho_calibracao)
-    if not caminho.exists():
-        return None
-
+def carregar_pixels_por_cm():
+    """Lê o arquivo de calibração JSON com a escala da referência fixa."""
     try:
-        with caminho.open("r", encoding="utf-8") as f:
-            dados = json.load(f)
-        valor = dados.get("pixels_por_cm", None)
-        return float(valor) if valor is not None else None
-    except Exception:
-        return None
+        if CAMINHO_CALIBRACAO.exists():
+            with open(CAMINHO_CALIBRACAO, "r") as f:
+                dados = json.load(f)
+                return dados.get("pixels_por_cm_fixo")
+        else:
+            print(f"[Aviso] Arquivo de calibração não encontrado em: {CAMINHO_CALIBRACAO}")
+    except Exception as e:
+        print(f"[Erro] Falha ao ler calibração: {e}")
+    return None
 
 
-def salvar_calibracao_pixels_por_cm(pixels_por_cm, caminho_calibracao=CAMINHO_CALIBRACAO):
-    caminho = Path(caminho_calibracao)
-    caminho.parent.mkdir(parents=True, exist_ok=True)
-    with caminho.open("w", encoding="utf-8") as f:
-        json.dump({"pixels_por_cm": float(pixels_por_cm)}, f, ensure_ascii=False, indent=2)
+def salvar_foto(frame_bgr, pasta_destino, prefixo="foto"):
+    """Salva a imagem capturada e retorna APENAS O NOME do arquivo para o CSV."""
+    agora = datetime.now().strftime("%d-%m-%Y_%H-%M-%S")
+    nome = f"{prefixo}_{agora}.png"
+    caminho = Path(pasta_destino) / nome
+    cv2.imwrite(str(caminho), frame_bgr)
+
+    # Retorna apenas o nome da foto para cruzar corretamente com o histórico do dashboard
+    return nome
 
 
-def salvar_foto(frame_bgr, pasta_destino, prefixo="medicao"):
-    """
-    Salva imagem de forma robusta no Windows:
-    usa cv2.imencode + write_bytes para evitar falhas com unicode em path.
-    """
-    pasta = Path(pasta_destino)
-    pasta.mkdir(parents=True, exist_ok=True)
+def salvar_medida_dashboard(arquivo_foto, modo, largura_cm, altura_cm, pixels_por_cm, status_ref):
+    """Salva os dados da medição atrelados à foto em um arquivo CSV."""
+    existe = ARQUIVO_MEDIDAS_DASHBOARD.exists()
 
-    timestamp = datetime.now().strftime("%d-%m-%Y_%H-%M-%S")
-    nome_arquivo = f"{prefixo}_{timestamp}.png"
-    caminho = pasta / nome_arquivo
+    with open(ARQUIVO_MEDIDAS_DASHBOARD, mode='a', newline='', encoding='utf-8') as csvfile:
+        colunas = ["timestamp", "arquivo_foto", "modo", "largura_cm", "altura_cm", "pixels_por_cm", "status_ref"]
+        writer = csv.DictWriter(csvfile, fieldnames=colunas)
 
-    ok, buf = cv2.imencode(".png", frame_bgr)
-    if not ok:
-        raise RuntimeError("Falha no cv2.imencode('.png', frame).")
+        # Cria o cabeçalho se o arquivo estiver sendo criado pela primeira vez
+        if not existe:
+            writer.writeheader()
 
-    caminho.write_bytes(buf.tobytes())
-    return str(caminho.resolve())
-
-
-def salvar_medida_dashboard(
-    arquivo_foto: str,
-    modo: str,
-    largura_cm,
-    altura_cm,
-    pixels_por_cm,
-    status_ref
-):
-    novo_arquivo = not ARQUIVO_MEDIDAS_DASHBOARD.exists()
-
-    with ARQUIVO_MEDIDAS_DASHBOARD.open("a", newline="", encoding="utf-8") as f:
-        writer = csv.writer(f)
-        if novo_arquivo:
-            writer.writerow([
-                "timestamp",
-                "arquivo_foto",
-                "modo",
-                "largura_cm",
-                "altura_cm",
-                "pixels_por_cm",
-                "status_ref",
-            ])
-
-        writer.writerow([
-            datetime.now().strftime("%d/%m/%Y %H:%M:%S"),
-            arquivo_foto,
-            modo,
-            largura_cm if largura_cm is not None else "",
-            altura_cm if altura_cm is not None else "",
-            pixels_por_cm if pixels_por_cm is not None else "",
-            status_ref if status_ref is not None else "",
-        ])
+        writer.writerow({
+            "timestamp": datetime.now().strftime("%d/%m/%Y %H:%M:%S"),
+            "arquivo_foto": arquivo_foto,
+            "modo": modo,
+            "largura_cm": f"{largura_cm:.2f}" if largura_cm else "",
+            "altura_cm": f"{altura_cm:.2f}" if altura_cm else "",
+            "pixels_por_cm": f"{pixels_por_cm:.2f}" if pixels_por_cm else "",
+            "status_ref": status_ref or ""
+        })

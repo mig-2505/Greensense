@@ -2,3 +2,6 @@ timestamp,arquivo_foto,modo,largura_cm,altura_cm,pixels_por_cm,status_ref
 18/08/2026 17:08:46,dashboard_fixo_18-08-2026_17-08-46.png,Calibração fixa,3.78,6.048,11.904761904761905,calibracao fixa
 18/08/2026 17:10:15,dashboard_referencia_18-08-2026_17-10-15.png,Com referência,3.7624999999999997,5.8625,11.428571428571429,referencia encontrada
 18/08/2026 17:11:07,dashboard_fixo_18-08-2026_17-11-07.png,Calibração fixa,3.864,6.132,11.904761904761905,calibracao fixa
+15/09/2026 21:11:48,dashboard_referencia_15-09-2026_21-11-48.png,Com referência,,,,referencia nao encontrada
+15/09/2026 21:27:05,dashboard_fixo_15-09-2026_21-27-05.png,Calibração fixa,,,11.904761904761905,calibracao fixa
+15/09/2026 21:40:34,dashboard_referencia_15-09-2026_21-40-34.png,Com referência,,,,referencia nao encontrada
